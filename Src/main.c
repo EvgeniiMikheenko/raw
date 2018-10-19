@@ -125,9 +125,9 @@ FW_str msg_param;
 
 typedef enum 
 {
-	FLAG_FW_OK,
 	FLAG_FW_NEW,	
-	FLAD_FW_UPDATE 
+	FLAD_FW_UPDATE,
+	FLAG_FW_OK
 } flag_enum;
 
 
@@ -177,7 +177,8 @@ uint8_t counter_tmp = 0;
 checksum_msg andww;
 uint8_t writed_line = 0;
 char send_buf[30];
-
+volatile uint8_t state_flag = 0;
+uint8_t tmp11111[300];
 int main(void)
 {
   /* USER CODE BEGIN 1 */
@@ -228,13 +229,27 @@ int main(void)
 	HAL_Delay(1000);
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);		//PWRKEY_LOW
 	HAL_Delay(1000);
-	
+		//read InfoStr
+	if(InfoStr.FLAG == FLAD_FW_UPDATE)
+		InfoStr.FLAG = FLAG_FW_NEW;
+	if( InfoStr.FLAG == FLAG_FW_NEW )
+		state_flag = WAIT_FW_CMD;
 
   while (1)
   { 
-		if(((MillisecondTick - lastReceivedTick) > END_OF_MSG_DELAY) && ind > 0 )
+		if(((MillisecondTick - lastReceivedTick) > END_OF_MSG_DELAY))
 		{
-			Parce_Packet( (uint8_t *)rdata, ind );
+			if( ind > 0 )
+			{
+//				for(int i = 0; i < 300; i++)
+//				{
+//					tmp11111[i] = rdata[2047 + i];
+//				}
+
+				Parce_Packet( (uint8_t *)rdata, ind );
+				ind = 0;
+			//	ind = 0;
+			}
 		}
 ////////////	 if(is_load == FW_Data) 
 ////////////	 {
@@ -329,7 +344,7 @@ int main(void)
 ////////////		 
 ////////////		 
 ////////////	 }
-
+HAL_Delay(1000);
   }
 
 
@@ -340,18 +355,24 @@ int main(void)
 uint8_t err_couter = 0;
 	uint16_t prev_write_end  = 0;
 
-
+uint16_t reduce_counter = 250;
 void HAL_SYSTICK_Callback(void)
 {
 	
 	MillisecondTick = HAL_GetTick();
-	if( InfoStr.FLAG == FLAG_FW_NEW || bl_delay > 0)
+	if( (InfoStr.FLAG == FLAG_FW_NEW)&& (state_flag == WAIT_FW_CMD))
 	{
-		uint8_t lng = Pack_buff((char *)send_buf, WAIT_FW, 0, 0);
-		HAL_UART_Transmit(&huart1, (uint8_t *)send_buf, lng, 100);
+		uint8_t lng = Pack_buff((char *)send_buf, WAIT_FW_CMD, 0, 0);
+		if(reduce_counter == 0)
+		{
+//			HAL_UART_Transmit(&huart1, (uint8_t *)send_buf, lng, 100);
+			reduce_counter = 3000;
+		}
 		if(bl_delay > 0)
 			bl_delay--;
 	}
+	if(reduce_counter > 0)
+		reduce_counter--;
 	
 	
 }
@@ -367,7 +388,7 @@ void Parce_Packet( uint8_t *buf, uint16_t lng )
 			{
 					if( buf[0] != ADDR)
 						return;
-					if( buf[1] != (RESET_CMD | DOWNLOAD_CMD | RECV_FW_CMD | NEW_INFO_CMD))
+					if( (buf[1] != RESET_CMD) && (buf[1] !=DOWNLOAD_CMD) && (buf[1] !=RECV_FW_CMD) && (buf[1] !=NEW_INFO_CMD))
 							return;
 					
 					Parce_CMD((uint8_t *)rdata, ind ); 
@@ -386,26 +407,28 @@ void Parce_CMD( uint8_t *buf, uint16_t lng )
 			while(1);
 		break;
 		case DOWNLOAD_CMD:
-		/*	
-			for( int i = 2; i < (lng-2); i++)
-			{
-				
-			}*/
-		InfoStr.FLAG = FLAD_FW_UPDATE;
-		uint8_t tmp[3];
-		tmp[0] = DATA_OK;
-		tmp[1] = BUFER_LNG & 0xFF;
-		tmp[2] = (BUFER_LNG >> 8)&0xFF;
-		uint8_t lng = Pack_buff((char *)send_buf, DOWNLOAD_CMD, tmp, sizeof(tmp));
-		HAL_UART_Transmit(&huart1, (uint8_t *)send_buf, lng, 500);
+				if(state_flag != WAIT_FW_CMD)
+					break;
+				state_flag = DOWNLOAD_CMD;
+				InfoStr.FLAG = FLAD_FW_UPDATE;
+				uint8_t tmp[3];
+				tmp[0] = DATA_OK;
+				tmp[1] = BUFER_LNG & 0xFF;
+				tmp[2] = (BUFER_LNG >> 8)&0xFF;
+				uint8_t lng_tmp = Pack_buff((char *)send_buf, DOWNLOAD_CMD, tmp, sizeof(tmp));
+		//		ind = 0;
+				HAL_UART_Transmit(&huart1, (uint8_t *)send_buf, lng_tmp, 500);
+				state_flag = DOWNLOAD_CMD;
+		
 			break;
 		case RECV_FW_CMD:
-			
+			if(state_flag != DOWNLOAD_CMD)
+				break;
 		
 			Get_Params(&msg_param, buf, lng);
 		
 			HAL_FLASH_Unlock();
-			FLASH_PageErase( FW_SHIFT + msg_param.page * FLASH_PAGE_SIZE );
+			FLASH_PageErase( EXTENDED_LINEAR_ADDRESS + FW_SHIFT + msg_param.page * FLASH_PAGE_SIZE );
 			while(FLASH->SR & FLASH_SR_BSY )
 			{}
 			HAL_FLASH_Lock();
@@ -426,8 +449,10 @@ void Parce_CMD( uint8_t *buf, uint16_t lng )
 				HAL_UART_Transmit(&huart1, (uint8_t *)send_buf, lng, 500);									
 				
 			}
-			break;
+		break;
 		case NEW_INFO_CMD:
+			if(state_flag != NEW_INFO_CMD){
+				break;}
 			break;
 		default:
 			break;
@@ -452,7 +477,7 @@ uint8_t Pack_buff( char *buff, uint8_t cmd, uint8_t *data, uint8_t data_lng)
 	 buff[lng++]  = crc16 & 0xFF;
 	 buff[lng] = crc16 >> 8;
 	 
-	 return lng;
+	 return ++lng;
 		
 	
 };
@@ -518,7 +543,7 @@ checksum_msg Get_Raw_FW(FW_str *str, uint8_t *data, uint16_t lng)
 
 								FLASH->CR &= ~(FLASH_CR_PER);
 								FLASH->CR |= FLASH_CR_PG;
-								FLASHStatus = HAL_FLASH_Program( FLASH_TYPEPROGRAM_WORD, (FW_ADDRESS_SHIFT+(extented_linear_adress + address_data)), program_data);
+								FLASHStatus = HAL_FLASH_Program( FLASH_TYPEPROGRAM_WORD, ((EXTENDED_LINEAR_ADDRESS + address_data)), program_data);
 								
 							//	prev_lng += str->data_lng;
 								while(FLASH->SR & FLASH_SR_BSY )
@@ -644,7 +669,7 @@ checksum_msg Get_Raw_FW(FW_str *str, uint8_t *data, uint16_t lng)
 						}	
 					
 				}
-				else if(type_data == 0x01)
+				else if(type_data == 0x01)		//EOF
 				{
 						Read_NB((char *)data, buff, si, 2);
 						si += 2;
@@ -654,6 +679,7 @@ checksum_msg Get_Raw_FW(FW_str *str, uint8_t *data, uint16_t lng)
 								return END_CHECK_SUM_ERROR;
 						}
 						HAL_FLASH_Lock();
+						state_flag = NEW_INFO_CMD;
 						is_end = true;
 						break;
 				}		
@@ -707,7 +733,7 @@ uint8_t Ascii_To_Hex_Short(uint8_t count)
 		{
 			return (count-0x30);
 		}
-		else
+		else if((count <= 'F' && count >='A') || (count <= 'f' && count >='a'))
 		{
 			return (count - 0x41 + 10);
 		}	
@@ -715,7 +741,7 @@ uint8_t Ascii_To_Hex_Short(uint8_t count)
 }
 bool Get_Params(FW_str *str, uint8_t *data, uint16_t lng)
 {
-			uint8_t tmp;
+			uint16_t tmp;
 //			uint8_t tmp2;
 			bool ans = false;
 			for(int i = 0; i <= lng; i++)
@@ -730,7 +756,7 @@ bool Get_Params(FW_str *str, uint8_t *data, uint16_t lng)
 							i--;
 							for( int j = (i - tmp); j > 0; j--)
 							{
-									str->page += (Ascii_To_Hex_Short(data[i-j+1]))<<(4*(j-1));
+									str->page += (Ascii_To_Hex_Short(data[i-j+1]) *10^(j-1));
 									ans = false;
 							}
 
@@ -852,6 +878,7 @@ void USART1_IRQHandler(void)
 	{
 			HAL_UART_RxCpltCallback(&huart1);
 	}
+	huart1.Instance->ICR |= 0x0F;	//reset error
 
 }
 bool get_param(uint8_t* data, uint16_t* page, uint16_t* lng,uint16_t* msg_ln)
@@ -871,9 +898,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 		if( huart->Instance == USART1)
 		{
-			rdata[ind] = (uint8_t)huart->Instance->RDR;
+			rdata[ind++] = (uint8_t)huart->Instance->RDR;
 			lastReceivedTick = HAL_GetTick();
-			ind >= BUFER_LNG ? ind = 0: ind++;		//error buffer overflow
+			//ind >= BUFER_LNG ? ind = 0: ind++;		//error buffer overflow
 		};
 
 }

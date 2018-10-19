@@ -1,0 +1,4 @@
+bootloader+
+flash errase+
+flash_programming+
+проверка и обмен---

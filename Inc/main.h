@@ -57,19 +57,24 @@
 /* #define USE_FULL_ASSERT    1U */
 
 /* USER CODE BEGIN Private defines */
+
+#define EXTENDED_LINEAR_ADDRESS	0x08000000
 #define BL_WAIT 1500	//in milliseconds
 #define BUFER_LNG	2832
-#define END_OF_MSG_DELAY 4
+#define END_OF_MSG_DELAY 5
 #define DATA_OK		0x55
 #define DATA_NOK  0xFF
 #define FW_SHIFT  0x2800
 
 #define ADDR  0x01
-#define WAIT_FW 0x01
+#define WAIT_FW_CMD 0x01
 #define RESET_CMD		0x02
 #define DOWNLOAD_CMD	0x03
 #define RECV_FW_CMD		0x04
 #define NEW_INFO_CMD	0x05
+
+
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
